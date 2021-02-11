@@ -7,6 +7,7 @@ require 'open-uri'
 require 'omniauth'
 require 'openid_connect'
 require 'forwardable'
+require 'pkce_challenge'
 
 module OmniAuth
   module Strategies
@@ -50,6 +51,11 @@ module OmniAuth
       option :client_auth_method
       option :post_logout_redirect_uri
       option :uid_field, 'sub'
+      option :pkce_challenge_enabled, true
+      option :pkce_challenge_algo, "S256" # plain unsupported
+      option :pkce_challenge_length, 128
+
+
 
       def uid
         user_info.public_send(options.uid_field.to_s)
@@ -146,6 +152,16 @@ module OmniAuth
         end_session_uri.to_s
       end
 
+      def pkce_opts
+        return {} unless options.pkce_challenge_algo == "S256" # Review notes: Clarify if plain challenge should be supported
+        pkce_challenge = PkceChallenge.challenge(char_length: options.pkce_challenge_length)
+        session["omniauth.pkce_verifier"] = pkce_challenge.code_verifier
+        {
+          code_challenge_method: options.pkce_challenge_algo,
+          code_challenge: pkce_challenge.code_challenge
+        }
+      end
+
       def authorize_uri
         client.redirect_uri = redirect_uri
         opts = {
@@ -159,6 +175,8 @@ module OmniAuth
           nonce: (new_nonce if options.send_nonce),
           hd: options.hd,
         }
+
+        opts = opts.merge(pkce_opts) if options.pkce_challenge_enabled
         client.authorization_uri(opts.reject { |_k, v| v.nil? })
       end
 
@@ -193,10 +211,20 @@ module OmniAuth
       def access_token
         return @access_token if @access_token
 
-        @access_token = client.access_token!(
-          scope: (options.scope if options.send_scope_to_token_endpoint),
-          client_auth_method: options.client_auth_method
-        )
+        # Review notes: Maybe find a more elegant/DRY way of doing this.
+        if options.pkce_challenge_enabled
+          @access_token = client.access_token!(
+            scope: (options.scope if options.send_scope_to_token_endpoint),
+            client_auth_method: options.client_auth_method,
+            code_verifier: stored_pkce_verification
+          )
+        else
+          @access_token = client.access_token!(
+            scope: (options.scope if options.send_scope_to_token_endpoint),
+            client_auth_method: options.client_auth_method,
+          )
+        end
+
         id_token = decode_id_token(@access_token.id_token)
         id_token.verify!(
           issuer: options.issuer,
@@ -235,6 +263,10 @@ module OmniAuth
 
       def stored_nonce
         session.delete('omniauth.nonce')
+      end
+
+      def stored_pkce_verification
+        session.delete('omniauth.pkce_verifier')
       end
 
       def session
