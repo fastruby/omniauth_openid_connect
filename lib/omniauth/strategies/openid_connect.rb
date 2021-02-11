@@ -15,6 +15,11 @@ module OmniAuth
       include OmniAuth::Strategy
       extend Forwardable
 
+      RESPONSE_TYPE_EXCEPTIONS = {
+        'id_token' => { exception_class: OmniAuth::OpenIDConnect::MissingIdTokenError, key: :missing_id_token }.freeze,
+        'code' => { exception_class: OmniAuth::OpenIDConnect::MissingCodeError, key: :missing_code }.freeze,
+      }.freeze
+
       def_delegator :request, :params
 
       option :name, 'openid_connect'
@@ -36,9 +41,9 @@ module OmniAuth
       option :client_jwk_signing_key
       option :client_x509_signing_key
       option :scope, [:openid]
-      option :response_type, 'code'
+      option :response_type, 'code' # ['code', 'id_token']
       option :state
-      option :response_mode
+      option :response_mode # [:query, :fragment, :form_post, :web_message]
       option :display, nil # [:page, :popup, :touch, :wap]
       option :prompt, nil # [:none, :login, :consent, :select_account]
       option :hd, nil
@@ -50,6 +55,7 @@ module OmniAuth
       option :send_scope_to_token_endpoint, true
       option :client_auth_method
       option :post_logout_redirect_uri
+      option :extra_authorize_params, {}
       option :uid_field, 'sub'
       option :pkce_challenge_enabled, true
       option :pkce_challenge_algo, "S256" # plain unsupported
@@ -58,10 +64,7 @@ module OmniAuth
 
 
       def uid
-        user_info.public_send(options.uid_field.to_s)
-      rescue NoMethodError
-        log :warn, "User sub:#{user_info.sub} missing info field: #{options.uid_field}"
-        user_info.sub
+        user_info.raw_attributes[options.uid_field.to_sym] || user_info.sub
       end
 
       info do
@@ -111,20 +114,26 @@ module OmniAuth
         error_description = params['error_description'] || params['error_reason']
         invalid_state = params['state'].to_s.empty? || params['state'] != stored_state
 
-        raise CallbackError.new(params['error'], error_description, params['error_uri']) if error
+        raise CallbackError, error: params['error'], reason: error_description, uri: params['error_uri'] if error
+        raise CallbackError, error: :csrf_detected, reason: "Invalid 'state' parameter" if invalid_state
 
-        raise CallbackError, 'Invalid state parameter' if invalid_state
-
-        return fail!(:missing_code, OmniAuth::OpenIDConnect::MissingCodeError.new(params['error'])) unless params['code']
+        return unless valid_response_type?
 
         options.issuer = issuer if options.issuer.nil? || options.issuer.empty?
+
+        verify_id_token!(params['id_token']) if configured_response_type == 'id_token'
         discover!
         client.redirect_uri = redirect_uri
+
+        return id_token_callback_phase if configured_response_type == 'id_token'
+
         client.authorization_code = authorization_code
         access_token
         super
-      rescue CallbackError, ::Rack::OAuth2::Client::Error => e
-        fail!(:invalid_credentials, e)
+      rescue CallbackError => e
+        fail!(e.error, e)
+      rescue ::Rack::OAuth2::Client::Error => e
+        fail!(e.response[:error], e)
       rescue ::Timeout::Error, ::Errno::ETIMEDOUT => e
         fail!(:timeout, e)
       rescue ::SocketError => e
@@ -166,6 +175,7 @@ module OmniAuth
         client.redirect_uri = redirect_uri
         opts = {
           response_type: options.response_type,
+          response_mode: options.response_mode,
           scope: options.scope,
           state: new_state,
           login_hint: params['login_hint'],
@@ -174,9 +184,12 @@ module OmniAuth
           prompt: options.prompt,
           nonce: (new_nonce if options.send_nonce),
           hd: options.hd,
+          acr_values: options.acr_values,
         }
 
         opts = opts.merge(pkce_opts) if options.pkce_challenge_enabled
+        opts.merge!(options.extra_authorize_params) unless options.extra_authorize_params.empty?
+
         client.authorization_uri(opts.reject { |_k, v| v.nil? })
       end
 
@@ -205,13 +218,20 @@ module OmniAuth
       end
 
       def user_info
-        @user_info ||= access_token.userinfo!
+        return @user_info if @user_info
+
+        if access_token.id_token
+          decoded = decode_id_token(access_token.id_token).raw_attributes
+
+          @user_info = ::OpenIDConnect::ResponseObject::UserInfo.new access_token.userinfo!.raw_attributes.merge(decoded)
+        else
+          @user_info = access_token.userinfo!
+        end
       end
 
       def access_token
         return @access_token if @access_token
-
-        # Review notes: Maybe find a more elegant/DRY way of doing this.
+        
         if options.pkce_challenge_enabled
           @access_token = client.access_token!(
             scope: (options.scope if options.send_scope_to_token_endpoint),
@@ -225,12 +245,8 @@ module OmniAuth
           )
         end
 
-        id_token = decode_id_token(@access_token.id_token)
-        id_token.verify!(
-          issuer: options.issuer,
-          client_id: client_options.identifier,
-          nonce: stored_nonce
-        )
+        verify_id_token!(@access_token.id_token) if configured_response_type == 'code'
+
         @access_token
       end
 
@@ -326,13 +342,45 @@ module OmniAuth
         @logout_path_pattern ||= %r{\A#{Regexp.quote(request_path)}(/logout)}
       end
 
+      def id_token_callback_phase
+        user_data = decode_id_token(params['id_token']).raw_attributes
+        env['omniauth.auth'] = AuthHash.new(
+          provider: name,
+          uid: user_data['sub'],
+          info: { name: user_data['name'], email: user_data['email'] },
+          extra: { raw_info: user_data }
+        )
+        call_app!
+      end
+
+      def valid_response_type?
+        return true if params.key?(configured_response_type)
+
+        error_attrs = RESPONSE_TYPE_EXCEPTIONS[configured_response_type]
+        fail!(error_attrs[:key], error_attrs[:exception_class].new(params['error']))
+
+        false
+      end
+
+      def configured_response_type
+        @configured_response_type ||= options.response_type.to_s
+      end
+
+      def verify_id_token!(id_token)
+        return unless id_token
+
+        decode_id_token(id_token).verify!(issuer: options.issuer,
+                                          client_id: client_options.identifier,
+                                          nonce: stored_nonce)
+      end
+
       class CallbackError < StandardError
         attr_accessor :error, :error_reason, :error_uri
 
-        def initialize(error, error_reason = nil, error_uri = nil)
-          self.error = error
-          self.error_reason = error_reason
-          self.error_uri = error_uri
+        def initialize(data)
+          self.error = data[:error]
+          self.error_reason = data[:reason]
+          self.error_uri = data[:uri]
         end
 
         def message

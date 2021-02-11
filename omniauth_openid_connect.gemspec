@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
   spec.email         = ['jjbohn@gmail.com', 'm0n9oose@gmail.com']
   spec.summary       = 'OpenID Connect Strategy for OmniAuth'
   spec.description   = 'OpenID Connect Strategy for OmniAuth.'
-  spec.homepage      = 'https://github.com/jjbohn/omniauth-openid-connect'
+  spec.homepage      = 'https://github.com/m0n9oose/omniauth_openid_connect'
   spec.license       = 'MIT'
 
   spec.files         = `git ls-files -z`.split("\x0")
@@ -20,7 +20,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   spec.add_dependency 'addressable', '~> 2.5'
-  spec.add_dependency 'omniauth', '~> 1.3'
+  spec.add_dependency 'omniauth', '~> 1.9'
   spec.add_dependency 'openid_connect', '~> 1.1'
   spec.add_development_dependency 'coveralls', '~> 0.8'
   spec.add_development_dependency 'faker', '~> 1.6'
