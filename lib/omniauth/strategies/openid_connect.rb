@@ -54,8 +54,7 @@ module OmniAuth
       option :pkce_challenge_enabled, true
       option :pkce_challenge_algo, "S256" # plain unsupported
       option :pkce_challenge_length, 128
-
-
+      option :idp_configured, false
 
       def uid
         user_info.public_send(options.uid_field.to_s)
@@ -101,9 +100,13 @@ module OmniAuth
       end
 
       def request_phase
-        options.issuer = issuer if options.issuer.to_s.empty?
-        discover!
-        redirect authorize_uri
+        if options.idp_configured
+          options.issuer = issuer if options.issuer.to_s.empty?
+          discover!
+          redirect authorize_uri
+        else
+          redirect options.post_logout_redirect_uri
+        end
       end
 
       def callback_phase
