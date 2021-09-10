@@ -155,6 +155,46 @@ module OmniAuth
         strategy.request_phase
       end
 
+      def test_request_phase_with_discovery_fails_error_redirection
+        
+        strategy.options.client_options.host = 'example.com'
+        strategy.options.discovery = true
+        strategy.options.pkce_challenge_enabled = false
+        strategy.options.idp_configured = true
+        strategy.options.error_redirect_uri = 'error_redirect'
+        strategy.options.post_logout_redirect_uri = 'localhost'
+
+        issuer = stub('OpenIDConnect::Discovery::Issuer')
+        issuer.stubs(:issuer).returns('https://example.com/')
+        ::OpenIDConnect::Discovery::Provider
+          .stubs(:discover!)
+          .raises(::OpenIDConnect::Discovery::DiscoveryFailed.new())
+        
+        expected_redirect = /error_redirect\?error=sso_discovery_failed/
+        strategy.expects(:redirect).with(regexp_matches(expected_redirect))
+        strategy.request_phase
+      end
+
+      def test_request_phase_with_discovery_fails_error_redirection
+        
+        strategy.options.client_options.host = 'example.com'
+        strategy.options.discovery = true
+        strategy.options.pkce_challenge_enabled = false
+        strategy.options.idp_configured = true
+        strategy.options.error_redirect_uri = 'error_redirect'
+        strategy.options.post_logout_redirect_uri = 'localhost'
+
+        issuer = stub('OpenIDConnect::Discovery::Issuer')
+        issuer.stubs(:issuer).returns('https://example.com/')
+        ::OpenIDConnect::Discovery::Provider
+          .stubs(:discover!)
+          .raises(::OpenIDConnect::Discovery::DiscoveryFailed.new())
+        
+        expected_redirect = /error_redirect\?error=sso_discovery_failed/
+        strategy.expects(:redirect).with(regexp_matches(expected_redirect))
+        strategy.request_phase
+      end
+
       def test_request_phase_with_response_mode
         expected_redirect = /^https:\/\/example\.com\/authorize\?client_id=1234&nonce=\w{32}&response_mode=form_post&response_type=id_token&scope=openid&state=\w{32}$/
         strategy.options.issuer = 'example.com'
@@ -332,6 +372,32 @@ module OmniAuth
           .stubs(:discover!)
           .raises(::OpenIDConnect::Discovery::DiscoveryFailed.new())
         expected_redirect = /localhost\?error=sso_discovery_failed/
+        
+        strategy.expects(:redirect).with(regexp_matches(expected_redirect))
+        strategy.call!('rack.session' => { 'omniauth.state' => state, 'omniauth.nonce' => nonce })
+        strategy.callback_phase
+      end
+
+      def test_callback_phase_with_discovery_fail_redirect_error
+        code = SecureRandom.hex(16)
+        state = SecureRandom.hex(16)
+        nonce = SecureRandom.hex(16)
+        jwks = JSON::JWK::Set.new(JSON.parse(File.read('test/fixtures/jwks.json'))['keys'])
+
+        request.stubs(:params).returns('code' => code, 'state' => state)
+        request.stubs(:path_info).returns('')
+
+        strategy.options.client_options.host = 'example.com'
+        strategy.options.discovery = true
+        strategy.options.post_logout_redirect_uri = 'localhost'
+        strategy.options.error_redirect_uri = "error_uri"
+
+        issuer = stub('OpenIDConnect::Discovery::Issuer')
+        issuer.stubs(:issuer).returns('https://example.com/')
+        ::OpenIDConnect::Discovery::Provider
+          .stubs(:discover!)
+          .raises(::OpenIDConnect::Discovery::DiscoveryFailed.new())
+        expected_redirect = /error_uri\?error=sso_discovery_failed/
         
         strategy.expects(:redirect).with(regexp_matches(expected_redirect))
         strategy.call!('rack.session' => { 'omniauth.state' => state, 'omniauth.nonce' => nonce })

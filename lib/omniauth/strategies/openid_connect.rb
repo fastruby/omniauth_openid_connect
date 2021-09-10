@@ -65,6 +65,7 @@ module OmniAuth
       option :pkce_challenge_algo, "S256" # plain unsupported
       option :pkce_challenge_length, 128
       option :idp_configured, false
+      option :error_redirect_uri
 
       def uid
         user_info.raw_attributes[options.uid_field.to_sym] || user_info.sub
@@ -107,7 +108,8 @@ module OmniAuth
       end
 
       def construct_redirection_uri(error_message)
-        url = URI(options.post_logout_redirect_uri)
+        url = options.error_redirect_uri || options.post_logout_redirect_uri
+        url = URI(url)
         new_query_ar = URI.decode_www_form(url.query || '') << ['error', error_message]
         url.query = URI.encode_www_form(new_query_ar)
         url
