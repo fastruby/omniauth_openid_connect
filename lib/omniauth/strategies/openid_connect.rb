@@ -15,6 +15,10 @@ module OmniAuth
       include OmniAuth::Strategy
       extend Forwardable
 
+      ERROR_MESSAGES = {
+        :discovery_failed => 'sso_discovery_failed',
+      }
+
       RESPONSE_TYPE_EXCEPTIONS = {
         'id_token' => { exception_class: OmniAuth::OpenIDConnect::MissingIdTokenError, key: :missing_id_token }.freeze,
         'code' => { exception_class: OmniAuth::OpenIDConnect::MissingCodeError, key: :missing_code }.freeze,
@@ -61,6 +65,7 @@ module OmniAuth
       option :pkce_challenge_algo, "S256" # plain unsupported
       option :pkce_challenge_length, 128
       option :idp_configured, false
+      option :error_redirect_uri
 
       def uid
         user_info.raw_attributes[options.uid_field.to_sym] || user_info.sub
@@ -102,6 +107,14 @@ module OmniAuth
         @config ||= ::OpenIDConnect::Discovery::Provider::Config.discover!(options.issuer)
       end
 
+      def construct_redirection_uri(error_message)
+        url = options.error_redirect_uri || options.post_logout_redirect_uri
+        url = URI(url)
+        new_query_ar = URI.decode_www_form(url.query || '') << ['error', error_message]
+        url.query = URI.encode_www_form(new_query_ar)
+        url
+      end
+
       def request_phase
         if options.idp_configured
           options.issuer = issuer if options.issuer.to_s.empty?
@@ -110,6 +123,9 @@ module OmniAuth
         else
           redirect options.post_logout_redirect_uri
         end
+      rescue ::OpenIDConnect::Discovery::DiscoveryFailed
+        url = construct_redirection_uri ERROR_MESSAGES[:discovery_failed]
+        redirect url.to_s
       end
 
       def callback_phase
@@ -141,6 +157,9 @@ module OmniAuth
         fail!(:timeout, e)
       rescue ::SocketError => e
         fail!(:failed_to_connect, e)
+      rescue ::OpenIDConnect::Discovery::DiscoveryFailed
+        url = construct_redirection_uri ERROR_MESSAGES[:discovery_failed]
+        redirect url.to_s
       end
 
       def other_phase
@@ -150,6 +169,9 @@ module OmniAuth
           return redirect(end_session_uri) if end_session_uri
         end
         call_app!
+      rescue ::OpenIDConnect::Discovery::DiscoveryFailed
+        url = construct_redirection_uri ERROR_MESSAGES[:discovery_failed]
+        redirect url.to_s
       end
 
       def authorization_code
