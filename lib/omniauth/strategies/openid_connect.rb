@@ -16,8 +16,8 @@ module OmniAuth
       extend Forwardable
 
       ERROR_MESSAGES = {
-        :discovery_failed => 'sso_discovery_failed',
-      }
+        discovery_failed: 'sso_discovery_failed',
+      }.freeze
 
       RESPONSE_TYPE_EXCEPTIONS = {
         'id_token' => { exception_class: OmniAuth::OpenIDConnect::MissingIdTokenError, key: :missing_id_token }.freeze,
@@ -62,7 +62,7 @@ module OmniAuth
       option :extra_authorize_params, {}
       option :uid_field, 'sub'
       option :pkce_challenge_enabled, true
-      option :pkce_challenge_algo, "S256" # plain unsupported
+      option :pkce_challenge_algo, 'S256' # plain unsupported
       option :pkce_challenge_length, 128
       option :idp_configured, false
       option :error_redirect_uri
@@ -187,12 +187,13 @@ module OmniAuth
       end
 
       def pkce_opts
-        return {} unless options.pkce_challenge_algo == "S256" # Review notes: Clarify if plain challenge should be supported
+        return {} unless options.pkce_challenge_algo == 'S256' # Review notes: Clarify if plain challenge should be supported
+
         pkce_challenge = PkceChallenge.challenge(char_length: options.pkce_challenge_length)
-        session["omniauth.pkce_verifier"] = pkce_challenge.code_verifier
+        session['omniauth.pkce_verifier'] = pkce_challenge.code_verifier
         {
           code_challenge_method: options.pkce_challenge_algo,
-          code_challenge: pkce_challenge.code_challenge
+          code_challenge: pkce_challenge.code_challenge,
         }
       end
 
@@ -256,19 +257,19 @@ module OmniAuth
 
       def access_token
         return @access_token if @access_token
-        
-        if options.pkce_challenge_enabled
-          @access_token = client.access_token!(
-            scope: (options.scope if options.send_scope_to_token_endpoint),
-            client_auth_method: options.client_auth_method,
-            code_verifier: stored_pkce_verification
-          )
-        else
-          @access_token = client.access_token!(
-            scope: (options.scope if options.send_scope_to_token_endpoint),
-            client_auth_method: options.client_auth_method,
-          )
-        end
+
+        @access_token = if options.pkce_challenge_enabled
+                          client.access_token!(
+                            scope: (options.scope if options.send_scope_to_token_endpoint),
+                            client_auth_method: options.client_auth_method,
+                            code_verifier: stored_pkce_verification
+                          )
+                        else
+                          client.access_token!(
+                            scope: (options.scope if options.send_scope_to_token_endpoint),
+                            client_auth_method: options.client_auth_method
+                          )
+                        end
 
         verify_id_token!(@access_token.id_token) if configured_response_type == 'code'
 
