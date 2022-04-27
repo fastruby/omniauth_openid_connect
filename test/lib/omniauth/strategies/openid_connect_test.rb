@@ -59,6 +59,7 @@ module OmniAuth
 
         strategy.expects(:redirect).with(regexp_matches(expected_redirect))
         request.stubs(:path_info).returns('/auth/openid_connect/logout')
+        request.stubs(:path).returns('/auth/openid_connect/logout')
         strategy.other_phase
       end
 
